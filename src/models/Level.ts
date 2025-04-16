@@ -55,7 +55,13 @@ export class Level {
     return success
   }
 
+  // Private method used internally
   private findAvailableSpots(vehicle: Vehicle): number {
+    return this.findAvailableSpotsForVehicle(vehicle);
+  }
+
+  // Public method to find available spots for a vehicle
+  findAvailableSpotsForVehicle(vehicle: Vehicle): number {
     const spotsNeeded = vehicle.requiredSpots()
     let lastRow = -1
     let spotsFound = 0
