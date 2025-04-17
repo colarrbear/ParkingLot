@@ -12,6 +12,7 @@ export class ParkingLot {
     for (let i = 0; i < this.NUM_LEVELS; i++) {
       this.levels.push(new Level(i, 30))
     }
+  // Initialize levels...
     this.dbConnector = DBConnector.getInstance()
   }
 
@@ -22,6 +23,7 @@ export class ParkingLot {
       
       if (spotNumber >= 0) {
         if (level.parkVehicle(vehicle)) {
+          // try to park in each level..., if successful, log to database
           // Log the parking event to the database with level and spot info
           await this.dbConnector.saveVehicleParked(vehicle, i, spotNumber);
           await this.dbConnector.saveParkingLotState(this);
@@ -57,17 +59,39 @@ export class ParkingLot {
     if (!vehicle) {
       return null; // No vehicle in this spot
     }
+    // Find vehicle
     
-    // Remove the vehicle from the spot
-    spot.removeVehicle();
+    // Get the number of spots this vehicle occupies
+    const requiredSpots = vehicle.requiredSpots();
     
-    // Update availability in the level
-    for (let i = 0; i < vehicle.requiredSpots(); i++) {
-      level.spotFreed();
+    // For multi-spot vehicles like buses, we need to find the first spot
+    // where the vehicle is parked, as spots are allocated contiguously
+    let firstSpotIndex = spotIndex;
+    
+    // Look backwards to find the first spot of the vehicle
+    while (firstSpotIndex > 0 && 
+           spots[firstSpotIndex - 1].vehicle === vehicle) {
+      firstSpotIndex--;
+    }
+    
+    // Now clear all spots occupied by this vehicle
+    for (let i = 0; i < requiredSpots; i++) {
+      const currentSpotIndex = firstSpotIndex + i;
+      
+      // Make sure we don't go out of bounds
+      if (currentSpotIndex < spots.length) {
+        const currentSpot = spots[currentSpotIndex];
+        
+        // Only clear if this spot has the same vehicle
+        if (currentSpot.vehicle === vehicle) {
+          currentSpot.removeVehicle();
+          level.spotFreed();
+        }
+      }
     }
     
     // Log the vehicle removal to the database
-    await this.dbConnector.saveVehicleLeft(vehicle, levelIndex, spotIndex);
+    await this.dbConnector.saveVehicleLeft(vehicle, levelIndex, firstSpotIndex);
     await this.dbConnector.saveParkingLotState(this);
     
     return vehicle;

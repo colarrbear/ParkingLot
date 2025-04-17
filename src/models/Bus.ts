@@ -6,7 +6,7 @@ export class Bus extends Vehicle {
     return spotType === ParkingSpotType.Large
   }
   requiredSpots(): number {
-    return 5
+    return 5 // 5 spots for a bus
   }
   getType(): string {
     return "bus"

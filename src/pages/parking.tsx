@@ -17,6 +17,8 @@ interface ParkingLog {
 
 interface ParkingSpot {
   spotType: string;
+  index: number;
+  row: number;
   vehicle: {
     licensePlate: string;
     type?: string;
@@ -49,7 +51,9 @@ export default function ParkingLotView() {
   const [failed, setFailed] = useState(false)
   const [lotFull, setLotFull] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [removingVehicle, setRemovingVehicle] = useState(false)
   const [parkingData, setParkingData] = useState<ParkingLotData | null>(null)
+  const [message, setMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null)
 
   // Load parking data on component mount
   useEffect(() => {
@@ -78,6 +82,7 @@ export default function ParkingLotView() {
     setLoading(true);
     setFailed(false);
     setLotFull(false);
+    setMessage(null);
     
     // Check if lot is full based on latest data
     if (parkingData?.isFull) {
@@ -109,6 +114,11 @@ export default function ParkingLotView() {
         if (data.error === 'Parking lot is full') {
           setLotFull(true);
         }
+      } else {
+        setMessage({
+          text: `${vehicle.type} parked successfully!`,
+          type: 'success'
+        });
       }
       
       // Reload parking data 
@@ -121,34 +131,157 @@ export default function ParkingLotView() {
     }
   };
 
-  // Render a single row of spots with appropriate visualization
-  const renderSpots = (spots: ParkingSpot[]) => {
-    // Create spaces for every 10 spots
-    const spaces = spots.map((_, j) => (j % 10 === 0) ? "\n  " : "").join("");
+  const handleRemoveVehicle = async (levelIndex: number, spotIndex: number) => {
+    setRemovingVehicle(true);
+    setMessage(null);
     
-    // Create visualization for each spot
-    const spotChars = spots.map(spot => {
-      if (spot.vehicle) {
-        const vehicleType = spot.vehicle.getType ? spot.vehicle.getType() : spot.vehicle.type;
-        if (vehicleType === "bus") return "B";
-        if (vehicleType === "car") return "C";
-        if (vehicleType === "motorcycle") return "M";
+    try {
+      const response = await fetch('/api/parking', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          levelIndex,
+          spotIndex
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Check the vehicle type to show appropriate message
+        const vehicleType = data.data?.vehicle?.type || 'vehicle';
+        setMessage({
+          text: `${vehicleType} removed successfully!`,
+          type: 'success'
+        });
+        await loadParkingData();
+      } else {
+        setMessage({
+          text: data.error || 'Failed to remove vehicle',
+          type: 'error'
+        });
       }
-      if (spot.spotType === "compact") return "c";
-      if (spot.spotType === "large") return "l";
-      if (spot.spotType === "motorcycle") return "m";
-      return "?";
-    }).join("");
+    } catch (error) {
+      console.error("Error removing vehicle:", error);
+      setMessage({
+        text: 'An error occurred while removing the vehicle',
+        type: 'error'
+      });
+    } finally {
+      setRemovingVehicle(false);
+    }
+  };
+
+  // Helper to identify multi-spot vehicles and if a spot is the "main" spot
+  const isMultiSpotVehicle = (spot: ParkingSpot): boolean => {
+    if (!spot.vehicle) return false;
+    const vehicleType = spot.vehicle.type || spot.vehicle.getType?.();
+    return vehicleType === 'bus'; // Buses take 5 spots
+  };
+
+  // Find if this is the first spot of a multi-spot vehicle
+  const isFirstSpotOfVehicle = (spots: ParkingSpot[], index: number): boolean => {
+    if (index === 0) return true;
+    const currentVehicle = spots[index].vehicle;
+    return currentVehicle !== spots[index - 1].vehicle;
+  };
+
+  // Calculate how many consecutive spots this vehicle occupies
+  const getConsecutiveSpots = (spots: ParkingSpot[], startIndex: number): number => {
+    if (!spots[startIndex].vehicle) return 1;
     
-    return spaces + spotChars;
+    const vehicle = spots[startIndex].vehicle;
+    let count = 0;
+    
+    for (let i = startIndex; i < spots.length; i++) {
+      if (spots[i].vehicle === vehicle) {
+        count++;
+      } else {
+        break;
+      }
+    }
+    
+    return count;
+  };
+
+  // Render a single row of spots with appropriate visualization
+  const renderSpots = (level: Level, spots: ParkingSpot[]) => {
+    return (
+      <div className="grid grid-cols-10 gap-1 mt-2">
+        {spots.map((spot, index) => {
+          // Determine if this is a multi-spot vehicle and if it's the first spot
+          const isMultiSpot = isMultiSpotVehicle(spot);
+          const isFirstSpot = spot.vehicle && isFirstSpotOfVehicle(spots, index);
+          const consecutiveSpots = isFirstSpot ? getConsecutiveSpots(spots, index) : 0;
+          
+          // Skip rendering spots that are part of a multi-spot vehicle but not the first spot
+          if (spot.vehicle && isMultiSpot && !isFirstSpot) {
+            return null;
+          }
+          
+          // Get vehicle type for display
+          const vehicleType = spot.vehicle ? 
+            (spot.vehicle.type || spot.vehicle.getType?.()) : null;
+          
+          return (
+            <div 
+              key={index} 
+              className={`
+                flex items-center justify-center 
+                ${spot.vehicle ? 'bg-blue-200' : 'bg-gray-200'}
+                ${spot.spotType === 'large' ? 'border-2 border-green-500' : ''}
+                ${spot.spotType === 'compact' ? 'border-2 border-blue-500' : ''}
+                ${spot.spotType === 'motorcycle' ? 'border-2 border-yellow-500' : ''}
+                rounded p-1 relative
+                ${isMultiSpot && isFirstSpot ? `col-span-${Math.min(consecutiveSpots, 5)}` : ''}
+                h-12
+              `}
+              style={{
+                width: isMultiSpot && isFirstSpot ? 'auto' : '3rem'
+              }}
+            >
+              {spot.vehicle ? (
+                <>
+                  <span className={`font-bold ${isMultiSpot ? 'text-lg' : 'text-sm'}`}>
+                    {vehicleType === 'bus' ? 'BUS' : 
+                     vehicleType === 'car' ? 'C' : 
+                     vehicleType === 'motorcycle' ? 'M' : '?'}
+                  </span>
+                  <button
+                    disabled={removingVehicle}
+                    onClick={() => handleRemoveVehicle(level.floor, spot.index)}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 
+                              flex items-center justify-center text-xs hover:bg-red-600"
+                    title={`Remove ${vehicleType}`}
+                  >
+                    ×
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs">{spot.spotType.charAt(0)}</span>
+              )}
+            </div>
+          );
+        }).filter(Boolean)}
+      </div>
+    );
   };
 
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Parking Lot</h1>
+      
+      {message && (
+        <div className={`p-2 rounded mb-4 ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {message.text}
+        </div>
+      )}
+      
       <button 
         onClick={handlePark} 
-        disabled={loading}
+        disabled={loading || removingVehicle}
         className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
       >
         {loading ? 'Parking...' : 'Park Random Vehicle'}
@@ -164,14 +297,26 @@ export default function ParkingLotView() {
       {lotFull && <div className="mt-2 text-red-600 font-bold">Cannot park any more vehicles - Parking Lot is full!</div>}
       {failed && !lotFull && <div className="mt-2 text-red-600 font-bold">Parking Failed!</div>}
       
-      <div className="mt-6 font-mono whitespace-pre bg-gray-100 p-4 rounded">
+      <div className="mt-6 bg-white p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">Current Parking Status:</h2>
+        <div className="mt-2 mb-4 grid grid-cols-3 gap-2">
+          <div className="flex items-center">
+            <div className="w-4 h-4 bg-gray-200 border-2 border-green-500 mr-2"></div>
+            <span className="text-sm">Large Spot</span>
+          </div>
+          <div className="flex items-center">
+            <div className="w-4 h-4 bg-gray-200 border-2 border-blue-500 mr-2"></div>
+            <span className="text-sm">Compact Spot</span>
+          </div>
+          <div className="flex items-center">
+            <div className="w-4 h-4 bg-gray-200 border-2 border-yellow-500 mr-2"></div>
+            <span className="text-sm">Motorcycle Spot</span>
+          </div>
+        </div>
         {parkingData?.levels.map((level, i) => (
-          <div key={i} className="mb-4">
-            <div className="font-bold">Level {i}:</div>
-            <div>
-              {level.spots && renderSpots(level.spots)}
-            </div>
+          <div key={i} className="mb-6 border p-3 rounded">
+            <div className="font-bold text-lg">Level {level.floor}</div>
+            {level.spots && renderSpots(level, level.spots)}
           </div>
         ))}
       </div>
